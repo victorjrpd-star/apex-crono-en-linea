@@ -1505,3 +1505,233 @@
       document.getElementById("shutterBtn").classList.add("recording");
       const counter = document.getElementById("recCounter");
       counter.classList.add("active");
+
+      function drawCanvasFrame() {
+        if (!isRecording) return;
+        if (renderCtx && videoElement.readyState >= 2) {
+          renderCtx.drawImage(videoElement, 0, 0, renderCanvas.width, renderCanvas.height);
+          
+          renderCtx.save();
+          renderCtx.shadowColor = "rgba(0, 0, 0, 0.95)";
+          renderCtx.shadowBlur = 10;
+          renderCtx.shadowOffsetX = 2;
+          renderCtx.shadowOffsetY = 2;
+
+          renderCtx.fillStyle = "#aaaaaa";
+          renderCtx.font = "bold 20px -apple-system, sans-serif";
+          renderCtx.fillText((document.getElementById("phaseLabel").textContent || "CUERDA").toUpperCase(), 50, 60);
+
+          renderCtx.fillStyle = "#ffffff";
+          renderCtx.font = "900 68px -apple-system, monospace";
+          renderCtx.fillText(document.getElementById("mainTime").textContent || "00:00", 50, 130);
+
+          renderCtx.fillStyle = "#e50914";
+          renderCtx.font = "bold 18px -apple-system, sans-serif";
+          renderCtx.fillText(`COACH: ${coachName} | PKG: ${currentSessionPackage.id}`, 50, 165);
+
+          let offsetY = 205;
+          for (let k in configNiveles) {
+            const n = configNiveles[k];
+            if (!n.active) continue;
+            const timeStr = document.getElementById(`time_${n.id}`).textContent || "01:00";
+            const taskStr = document.getElementById(`taskA_${n.id}`).textContent || "";
+            
+            renderCtx.fillStyle = "#ffffff";
+            renderCtx.font = "900 16px -apple-system, sans-serif";
+            renderCtx.fillText(`• ${n.name.toUpperCase()} [${timeStr}]: ${taskStr}`, 50, offsetY);
+            offsetY += 26;
+          }
+          renderCtx.restore();
+        }
+        canvasAnimId = requestAnimationFrame(drawCanvasFrame);
+      }
+      drawCanvasFrame();
+
+      recordInterval = setInterval(() => {
+        const elapsed = Math.floor((performance.now() - recordStartTime) / 1000);
+        if (isManualMode) {
+          counter.textContent = `REC 00:${Math.floor(elapsed/60).toString().padStart(2,'0')}:${(elapsed%60).toString().padStart(2, '0')}`;
+        } else {
+          counter.textContent = `REC 00:${elapsed.toString().padStart(2, '0')} / 00:${selectedDuration.toString().padStart(2, '0')}`;
+          if (elapsed >= selectedDuration) stopRecording(true);
+        }
+      }, 500);
+    }
+
+    function stopRecording(promptSave = true) {
+      if (!isRecording) return;
+      isRecording = false;
+      if (canvasAnimId) cancelAnimationFrame(canvasAnimId);
+      clearInterval(recordInterval);
+      document.getElementById("shutterBtn").classList.remove("recording");
+      document.getElementById("recCounter").classList.remove("active");
+      mediaRecorder.stop();
+      mediaRecorder.promptSave = promptSave;
+      document.getElementById("camPlaceholderMsg").style.display = "block";
+    }
+
+    function onRecordingStopped() {
+      if (this.promptSave && recordedChunks.length > 0) {
+        const mimeToUse = selectedMimeType || (recordedChunks[0] && recordedChunks[0].type) || 'video/mp4';
+        const blob = new Blob(recordedChunks, { type: mimeToUse });
+        latestBlobUrl = URL.createObjectURL(blob);
+        
+        const previewEl = document.getElementById("previewPlayer");
+        previewEl.src = latestBlobUrl;
+        
+        document.getElementById("saveVideoModal").classList.add("open");
+      }
+    }
+
+    async function saveToPackage() {
+      if (!latestBlobUrl || !sb) return;
+      
+      const clipName = `Apex_${currentSessionPackage.id}_${new Date().toLocaleTimeString().replace(/[:.]/g, "-")}.${fileExtension}`;
+      
+      const response = await fetch(latestBlobUrl);
+      const blobData = await response.blob();
+      const videoFile = new File([blobData], clipName, { type: selectedMimeType || 'video/mp4' });
+
+      alert("Subiendo evidencia ultraliviana a la nube...");
+
+      try {
+        const storagePath = `evidencias/${currentSessionPackage.id}/${clipName}`;
+        const { error: uploadError } = await sb.storage
+          .from('apex_videos')
+          .upload(storagePath, videoFile);
+
+        if (uploadError) throw uploadError;
+
+        const { data: publicURLData } = sb.storage
+          .from('apex_videos')
+          .getPublicUrl(storagePath);
+
+        const publicVideoUrl = publicURLData.publicUrl;
+
+        const { error: dbError } = await sb.from('apex_session_evidence').insert([{
+          package_id: currentSessionPackage.id,
+          class_name: currentSessionPackage.claseNombre || 'Clase Táctica',
+          coach_name: currentSessionPackage.coach,
+          video_url: publicVideoUrl
+        }]);
+
+        if (dbError) throw dbError;
+
+        document.getElementById("saveVideoModal").classList.remove("open");
+        alert(`¡Clip guardado y sincronizado en la nube para el Paquete ${currentSessionPackage.id}!`);
+
+      } catch (err) {
+        alert("Error al sincronizar con la nube: " + err.message);
+      }
+    }
+
+    function discardVideo() {
+      if (latestBlobUrl) URL.revokeObjectURL(latestBlobUrl);
+      document.getElementById("saveVideoModal").classList.remove("open");
+    }
+
+    async function openSessionLibrary() {
+      if (!sb) return;
+      const container = document.getElementById("packagesListContainer");
+      container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 15px;">Cargando historial de paquetes...</div>';
+      document.getElementById("libraryModal").classList.add("open");
+
+      try {
+        const { data, error } = await sb.from('apex_session_evidence').select('*').order('id', { ascending: false });
+        if (error) throw error;
+        
+        const evidencias = data || [];
+        if (evidencias.length === 0) {
+          container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 15px; font-size: 0.8rem;">No hay paquetes guardados en la nube todavía.</div>';
+          return;
+        }
+
+        const agrupados = {};
+        evidencias.forEach(item => {
+          if (!agrupados[item.package_id]) agrupados[item.package_id] = [];
+          agrupados[item.package_id].push(item);
+        });
+
+        container.innerHTML = "";
+        for (const pkgId in agrupados) {
+          const clipsList = agrupados[pkgId];
+          const row = document.createElement("div");
+          row.className = "package-row-item";
+          row.innerHTML = `
+            <div>
+              <div style="color:#fff;">Paquete: ${pkgId}</div>
+              <div style="font-size: 0.68rem; color: var(--text-muted);">Clase: ${clipsList[0].class_name} | Coach: ${clipsList[0].coach_name} (${clipsList.length} clips)</div>
+            </div>
+            <button class="modal-btn modal-btn-save" style="padding: 6px 12px; font-size: 0.72rem; flex:none;" onclick="openReelForPackage('${pkgId}')">Ver Reel</button>
+          `;
+          container.appendChild(row);
+        }
+      } catch (err) {
+        container.innerHTML = `<div style="text-align: center; color: var(--accent); padding: 15px;">Error: ${err.message}</div>`;
+      }
+    }
+
+    function closeSessionLibrary() {
+      document.getElementById("libraryModal").classList.remove("open");
+    }
+
+    async function openReelForPackage(pkgId) {
+      document.getElementById("libraryModal").classList.remove("open");
+      document.getElementById("reelPackageTitle").textContent = `Paquete: ${pkgId}`;
+      const reelContainer = document.getElementById("reelContainer");
+      reelContainer.innerHTML = '<div style="color: #fff; text-align: center; padding: 20px;">Cargando clips...</div>';
+      document.getElementById("reelModal").classList.add("open");
+
+      try {
+        const { data, error } = await sb.from('apex_session_evidence').select('*').eq('package_id', pkgId).order('id', { ascending: false });
+        if (error) throw error;
+        
+        const clips = data || [];
+        reelContainer.innerHTML = "";
+
+        clips.forEach(item => {
+          const card = document.createElement("div");
+          card.className = "reel-card";
+          card.innerHTML = `
+            <button class="btn-delete-clip" onclick="eliminarClipCloud(${item.id}, '${pkgId}')" title="Eliminar este video">✕</button>
+            <div class="reel-video-wrap">
+              <video src="${item.video_url}" controls playsinline preload="metadata" style="width:100%; height:100%; object-fit:cover;"></video>
+            </div>
+            <div class="reel-overlay-meta">
+              <div class="reel-badge">${item.package_id}</div>
+              <div class="reel-title">${item.class_name}</div>
+              <div class="reel-info">Coach: ${item.coach_name}</div>
+              <div class="reel-info" style="font-size: 0.62rem; color: #888;">${new Date(item.created_at).toLocaleString()}</div>
+            </div>
+          `;
+          reelContainer.appendChild(card);
+        });
+      } catch (err) {
+        reelContainer.innerHTML = `<div style="color: var(--accent); text-align: center; padding: 20px;">Error al cargar reel: ${err.message}</div>`;
+      }
+    }
+
+    function closeReelModal() {
+      document.getElementById("reelModal").classList.remove("open");
+    }
+
+    async function eliminarClipCloud(recordId, pkgId) {
+      if (!confirm("¿Estás seguro de eliminar este video de la nube?")) return;
+      try {
+        const { error } = await sb.from('apex_session_evidence').delete().eq('id', recordId);
+        if (error) throw error;
+        alert("Video eliminado correctamente.");
+        openReelForPackage(pkgId);
+      } catch (err) {
+        alert("Error al eliminar el video: " + err.message);
+      }
+    }
+
+    window.onload = async () => {
+      initLanesDOM();
+      await cargarClasesDesdeSupabase();
+      actualizarVista(0, false);
+    };
+  </script>
+</body>
+</html>
