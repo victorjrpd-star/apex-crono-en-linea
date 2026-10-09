@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0c0c0c">
+  <title>Apex - Generador de Plan de Entrenamiento</title>
+
+  <!-- Supabase Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    :root {
+      --bg: #0c0c0c;
+      --card-bg: #141414;
+      --border: #222222;
+      --accent: #e50914;
+      --text-main: #ffffff;
+      --text-muted: #888888;
+      --text-sub: #aaaaaa;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+    html, body { background: var(--bg); color: var(--text-main); padding: 12px; max-width: 650px; margin: 0 auto; user-select: none; }
+    
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 2px solid var(--border); padding-bottom: 10px; }
+    .main-title { font-size: 1.15rem; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #fff; }
+    .main-title span { color: var(--accent); }
+
+    .btn { padding: 10px 16px; font-size: 0.85rem; font-weight: 900; text-transform: uppercase; border: none; border-radius: 8px; cursor: pointer; letter-spacing: 0.5px; }
+    .btn-main { background: var(--accent); color: #fff; }
+    .btn-sub { background: #1c1c1c; color: #bbb; border: 1px solid #2a2a2a; }
+    .btn-danger { background: #5a0a0a; color: #ff8888; border: 1px solid #882222; }
+
+    .actions-bar { display: flex; gap: 10px; margin-bottom: 15px; }
+    
+    .card-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+    .plan-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .plan-info { display: flex; flex-direction: column; gap: 3px; }
+    .plan-title { font-size: 0.9rem; font-weight: 900; color: #fff; text-transform: uppercase; }
+    .plan-meta { font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; }
+    .plan-actions { display: flex; gap: 6px; }
+    .action-icon-btn { background: #1c1c1c; border: 1px solid #333; color: #fff; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; }
+    .action-icon-btn:hover { background: #333; }
+
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.88); z-index: 2000; justify-content: center; align-items: center; padding: 15px; }
+    .modal-overlay.open { display: flex; }
+    .modal-box { background: var(--card-bg); border: 2px solid var(--border); border-radius: 12px; padding: 20px; max-width: 520px; width: 100%; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .modal-box h2 { font-size: 1.15rem; font-weight: 900; text-transform: uppercase; color: #fff; text-align: center; margin-bottom: 4px; }
+    
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; color: var(--text-sub); }
+    .form-input, .form-textarea, .form-select { width: 100%; padding: 8px 10px; background: #1c1c1c; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 0.85rem; font-weight: 700; outline: none; }
+    .form-textarea { resize: vertical; min-height: 50px; font-size: 0.82rem; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    .builder-section { background: #181818; border: 1px solid #2a2a2a; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .builder-title { font-size: 0.78rem; font-weight: 900; text-transform: uppercase; color: var(--accent); }
+    .dynamic-row { display: flex; gap: 6px; align-items: center; }
+    .dynamic-row input { flex: 1; }
+    .btn-small { background: #2a2a2a; color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-weight: 800; cursor: pointer; font-size: 0.75rem; }
+    .btn-small:hover { background: #444; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="main-title">Generador <span>Plan de Entrenamiento</span></div>
+    <button class="btn btn-main" onclick="openModalForCreate()">+ Nueva Clase</button>
+  </div>
+
+  <div class="actions-bar">
+    <select id="filterClass" class="form-select" onchange="renderPlans()">
+      <option value="">Todas las Clases / Semanas</option>
+    </select>
+    <button class="btn btn-sub" onclick="cargarDatos()">Refrescar</button>
+  </div>
+
+  <div class="card-list" id="plansListContainer">
+    <div style="text-align: center; color: var(--text-muted); padding: 20px;">Cargando planes de entrenamiento...</div>
+  </div>
+
+  <!-- MODAL AMIGABLE SIN JSON VISIBLE -->
+  <div class="modal-overlay" id="planModal">
+    <div class="modal-box">
+      <h2 id="modalTitle">Configurar Clase</h2>
+      <input type="hidden" id="editRecordId">
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Nombre de Clase / Semana</label>
+          <input type="text" id="inputSemana" class="form-input" placeholder="Ej: Clase de Prueba 6">
+        </div>
+        <div class="form-group">
+          <label>Nivel Objetivo</label>
+          <select id="inputNivel" class="form-select">
+            <option value="Iniciado">Iniciado</option>
+            <option value="Intermedio">Intermedio</option>
+            <option value="Avanzado">Avanzado</option>
+            <option value="Apex">Apex</option>
+            <option value="Apex+">Apex+</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Pilar Técnico</label>
+        <input type="text" id="inputPilar" class="form-input" value="Técnica">
+      </div>
+
+      <div class="form-group">
+        <label>Descripción General Apertura / Cuerda</label>
+        <input type="text" id="inputApertura" class="form-input" placeholder="Ej: Cuerda exprés asimétrica">
+      </div>
+
+      <!-- CONSTRUCTOR VISUAL DE CUERDA -->
+      <div class="builder-section">
+        <div class="builder-title">Configuración de Rounds de Cuerda</div>
+        <div id="cuerdaRoundsContainer" style="display: flex; flex-direction: column; gap: 6px;"></div>
+        <button class="btn-small" onclick="agregarRoundCuerda()">+ Agregar Round de Cuerda</button>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Aprox 1 Duración (seg)</label>
+          <input type="number" id="inputAprox1" class="form-input" value="180">
+        </div>
+        <div class="form-group">
+          <label>Aprox 2 Duración (seg)</label>
+          <input type="number" id="inputAprox2" class="form-input" value="180">
+        </div>
+      </div>
+
+      <!-- CONSTRUCTOR VISUAL DE CUERPO DE CLASE -->
+      <div class="builder-section">
+        <div class="builder-title">Cuerpo de Clase (Estaciones / Rounds)</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Segundos de Trabajo</label>
+            <input type="number" id="inputWorkSec" class="form-input" value="60">
+          </div>
+          <div class="form-group">
+            <label>Segundos de Descanso</label>
+            <input type="number" id="inputRestSec" class="form-input" value="60">
+          </div>
+        </div>
+        <div class="form-group" style="margin-top: 4px;">
+          <label>Ejercicios del Cuerpo (Uno por línea)</label>
+          <textarea id="inputEjerciciosList" class="form-textarea" placeholder="Estación 1: Jab dinámico&#10;Estación 2: Cross rápido&#10;Estación 3: Esquiva flash"></textarea>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Charla Duración (seg)</label>
+          <input type="number" id="inputCharla" class="form-input" value="300">
+        </div>
+        <div class="form-group">
+          <label>Cierre Duración (seg)</label>
+          <input type="number" id="inputCierre" class="form-input" value="600">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Teoría Táctica</label>
+        <input type="text" id="inputTeoria" class="form-input" placeholder="Control de base y respiración inicial">
+      </div>
+
+      <div class="form-group">
+        <label>Error Fatal a Evitar</label>
+        <input type="text" id="inputErrorFatal" class="form-input" placeholder="Bloquear las rodillas">
+      </div>
+
+      <div class="form-group">
+        <label>Debate en Sala</label>
+        <input type="text" id="inputDebate" class="form-input" placeholder="¿Cómo afecta el ritmo corto?">
+      </div>
+
+      <div class="modal-actions" style="display: flex; gap: 10px; margin-top: 10px;">
+        <button class="btn btn-sub" style="flex: 1;" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-main" style="flex: 1;" onclick="guardarPlan()">Guardar en Supabase</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://fprvbvucmtdpxdihuvrw.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_xAMs8LpCwyMyoql3ohoJUQ_BIRhBQoD';
+    const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+    let allPlans = [];
+    let currentCuerdaConfig = [];
+
+    async function cargarDatos() {
+      if (!sb) return;
+      try {
+        const { data, error } = await sb.from('apex_training_plans').select('*').order('id', { ascending: true });
+        if (error) throw error;
+        allPlans = data || [];
+        
+        const filterSelect = document.getElementById('filterClass');
+        const currentVal = filterSelect.value;
+        filterSelect.innerHTML = '<option value="">Todas las Clases / Semanas</option>';
+        
+        const semanasUnicas = [...new Set(allPlans.map(p => p.semana))];
+        semanasUnicas.forEach(sem => {
+          const opt = document.createElement('option');
+          opt.value = sem;
+          opt.textContent = sem;
+          if (sem === currentVal) opt.selected = true;
+          filterSelect.appendChild(opt);
+        });
+
+        renderPlans();
+      } catch (err) {
+        alert("Error cargando base de datos: " + err.message);
+      }
+    }
+
+    function renderPlans() {
+      const container = document.getElementById('plansListContainer');
+      const filterSemana = document.getElementById('filterClass').value;
+      const filtered = filterSemana ? allPlans.filter(p => p.semana === filterSemana) : allPlans;
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 20px;">No se encontraron registros.</div>';
+        return;
+      }
+
+      container.innerHTML = '';
+      filtered.forEach(plan => {
+        const card = document.createElement('div');
+        card.className = 'plan-card';
+        card.innerHTML = `
+          <div class="plan-info">
+            <div class="plan-title">[${plan.nivel}] ${plan.semana}</div>
+            <div class="plan-meta">Pilar: ${plan.pilar || 'General'} | Aprox1: ${plan.aprox1_duracion || 180}s</div>
+          </div>
+          <div class="plan-actions">
+            <button class="action-icon-btn" onclick="openModalForEdit(${plan.id})">Editar</button>
+            <button class="action-icon-btn btn-danger" style="background:#2a0a0a; border-color:#551111;" onclick="eliminarRegistro(${plan.id})">Borrar</button>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function renderCuerdaBuilder() {
+      const container = document.getElementById('cuerdaRoundsContainer');
+      container.innerHTML = '';
+      currentCuerdaConfig.forEach((item, index) => {
+        const row = document.createElement('div');
+        row.className = 'dynamic-row';
+        row.innerHTML = `
+          <span style="font-size:0.75rem; font-weight:900; color:#888; width:28px;">R${index+1}</span>
+          <input type="number" class="form-input" style="width:75px;" value="${item.duration || 60}" placeholder="Seg" id="c_dur_${index}" title="Duración en segundos">
+          <input type="text" class="form-input" value="${item.desc || 'Salto base'}" placeholder="Descripción del round" id="c_desc_${index}">
+          <button class="btn-small btn-danger" onclick="eliminarRoundCuerda(${index})">✕</button>
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    function agregarRoundCuerda() {
+      currentCuerdaConfig.push({ round: currentCuerdaConfig.length + 1, duration: 60, desc: "Salto base" });
+      renderCuerdaBuilder();
+    }
+
+    function eliminarRoundCuerda(index) {
+      currentCuerdaConfig.splice(index, 1);
+      // Reindexar rounds
+      currentCuerdaConfig.forEach((item, idx) => item.round = idx + 1);
+      renderCuerdaBuilder();
+    }
+
+    function openModalForCreate() {
+      document.getElementById('editRecordId').value = '';
+      document.getElementById('modalTitle').textContent = 'Crear Nuevo Plan';
+      document.getElementById('inputSemana').value = 'Clase de Prueba';
+      document.getElementById('inputNivel').value = 'Iniciado';
+      document.getElementById('inputPilar').value = 'Técnica';
+      document.getElementById('inputApertura').value = '5 rounds de cuerda estándar';
+      
+      currentCuerdaConfig = [
+        { round: 1, duration: 60, desc: "Salto base" },
+        { round: 2, duration: 60, desc: "Ritmo constante" },
+        { round: 3, duration: 60, desc: "Variación" },
+        { round: 4, duration: 60, desc: "Aceleración" },
+        { round: 5, duration: 60, desc: "Intensidad" }
+      ];
+      renderCuerdaBuilder();
+
+      document.getElementById('inputAprox1').value = 180;
+      document.getElementById('inputAprox2').value = 180;
+      document.getElementById('inputWorkSec').value = 60;
+      document.getElementById('inputRestSec').value = 60;
+      document.getElementById('inputEjerciciosList').value = "Ejercicio 1\nEjercicio 2\nEjercicio 3";
+      document.getElementById('inputCharla').value = 300;
+      document.getElementById('inputCierre').value = 600;
+      document.getElementById('inputTeoria').value = 'Teoría táctica de alineación';
+      document.getElementById('inputErrorFatal').value = 'Bajar la guardia';
+      document.getElementById('inputDebate').value = '¿Cómo mantener el equilibrio?';
+      
+      document.getElementById('planModal').classList.add('open');
+    }
+
+    function openModalForEdit(id) {
+      const plan = allPlans.find(p => p.id === id);
+      if (!plan) return;
+
+      document.getElementById('editRecordId').value = plan.id;
+      document.getElementById('modalTitle').textContent = `Editar ID #${plan.id}`;
+      document.getElementById('inputSemana').value = plan.semana || '';
+      document.getElementById('inputNivel').value = plan.nivel || 'Iniciado';
+      document.getElementById('inputPilar').value = plan.pilar || '';
+      document.getElementById('inputApertura').value = plan.apertura || '';
+      
+      currentCuerdaConfig = Array.isArray(plan.cuerda_config) ? JSON.parse(JSON.stringify(plan.cuerda_config)) : [];
+      renderCuerdaBuilder();
+
+      document.getElementById('inputAprox1').value = plan.aprox1_duracion || 180;
+      document.getElementById('inputAprox2').value = plan.aprox2_duracion || 180;
+
+      const cuerpoCfg = plan.cuerpo_config || { work_seconds: 60, rest_seconds: 60, ejercicios: [] };
+      document.getElementById('inputWorkSec').value = cuerpoCfg.work_seconds || 60;
+      document.getElementById('inputRestSec').value = cuerpoCfg.rest_seconds || 60;
+      document.getElementById('inputEjerciciosList').value = Array.isArray(cuerpoCfg.ejercicios) ? cuerpoCfg.ejercicios.join('\n') : '';
+
+      document.getElementById('inputCharla').value = plan.charla_duracion || 300;
+      document.getElementById('inputCierre').value = plan.cierre_duracion || 600;
+      document.getElementById('inputTeoria').value = plan.teoria || '';
+      document.getElementById('inputErrorFatal').value = plan.error_fatal || '';
+      document.getElementById('inputDebate').value = plan.debate || '';
+
+      document.getElementById('planModal').classList.add('open');
+    }
+
+    function closeModal() {
+      document.getElementById('planModal').classList.remove('open');
+    }
+
+    async function guardarPlan() {
+      const id = document.getElementById('editRecordId').value;
+      
+      // Capturar datos del builder de cuerda
+      const cuerdaFinal = [];
+      currentCuerdaConfig.forEach((item, index) => {
+        const durInput = document.getElementById(`c_dur_${index}`);
+        const descInput = document.getElementById(`c_desc_${index}`);
+        cuerdaFinal.push({
+          round: index + 1,
+          duration: durInput ? parseInt(durInput.value, 10) || 60 : 60,
+          desc: descInput ? descInput.value.trim() || 'Salto base' : 'Salto base'
+        });
+      });
+
+      // Capturar ejercicios del cuerpo de clase
+      const ejerciciosTxt = document.getElementById('inputEjerciciosList').value;
+      const ejerciciosArr = ejerciciosTxt.split('\n').map(e => e.trim()).filter(e => e.length > 0);
+
+      const cuerpoFinal = {
+        total_rounds: ejerciciosArr.length > 0 ? ejerciciosArr.length : 4,
+        work_seconds: parseInt(document.getElementById('inputWorkSec').value, 10) || 60,
+        rest_seconds: parseInt(document.getElementById('inputRestSec').value, 10) || 60,
+        ejercicios: ejerciciosArr.length > 0 ? ejerciciosArr : ["Ejercicio Principal"]
+      };
+
+      const payload = {
+        semana: document.getElementById('inputSemana').value.trim(),
+        nivel: document.getElementById('inputNivel').value,
+        pilar: document.getElementById('inputPilar').value.trim(),
+        apertura: document.getElementById('inputApertura').value.trim(),
+        cuerda_config: cuerdaFinal,
+        aprox1_duracion: parseInt(document.getElementById('inputAprox1').value, 10) || 180,
+        aprox2_duracion: parseInt(document.getElementById('inputAprox2').value, 10) || 180,
+        cuerpo_config: cuerpoFinal,
+        charla_duracion: parseInt(document.getElementById('inputCharla').value, 10) || 300,
+        cierre_duracion: parseInt(document.getElementById('inputCierre').value, 10) || 600,
+        teoria: document.getElementById('inputTeoria').value.trim(),
+        error_fatal: document.getElementById('inputErrorFatal').value.trim(),
+        debate: document.getElementById('inputDebate').value.trim()
+      };
+
+      try {
+        if (id) {
+          const { error } = await sb.from('apex_training_plans').update(payload).eq('id', id);
+          if (error) throw error;
+        } else {
+          const { error } = await sb.from('apex_training_plans').insert([payload]);
+          if (error) throw error;
+        }
+        closeModal();
+        cargarDatos();
+      } catch (err) {
+        alert("Error guardando en Supabase: " + err.message);
+      }
+    }
+
+    async function eliminarRegistro(id) {
+      if (!confirm(`¿Estás seguro de eliminar el registro ID #${id}?`)) return;
+      try {
+        const { error } = await sb.from('apex_training_plans').delete().eq('id', id);
+        if (error) throw error;
+        cargarDatos();
+      } catch (err) {
+        alert("Error al eliminar: " + err.message);
+      }
+    }
+
+    window.onload = () => {
+      cargarDatos();
+    };
+  </script>
+</body>
+</html>

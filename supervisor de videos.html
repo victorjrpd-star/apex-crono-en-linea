@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0c0c0c">
+  <title>Apex - Supervisor de Videos</title>
+
+  <!-- Supabase Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    :root {
+      --bg: #0c0c0c;
+      --card-bg: #141414;
+      --border: #222222;
+      --accent: #e50914;
+      --text-main: #ffffff;
+      --text-muted: #888888;
+      --text-sub: #aaaaaa;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+    html, body { background: var(--bg); color: var(--text-main); padding: 16px; max-width: 600px; margin: 0 auto; user-select: none; }
+    
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 2px solid var(--border); padding-bottom: 10px; }
+    .main-title { font-size: 1.15rem; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #fff; }
+    .main-title span { color: var(--accent); }
+
+    .filter-wrap { margin-bottom: 20px; }
+    .form-select {
+      width: 100%; padding: 10px 12px; font-size: 0.88rem; font-weight: 700; background: var(--card-bg); color: #fff;
+      border: 1px solid var(--border); border-radius: 8px; outline: none; appearance: none; text-transform: uppercase;
+    }
+
+    /* CARRUSEL MODERNO TIPO REEL VERTICAL 9:16 */
+    .reel-container {
+      display: flex; gap: 16px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; padding-bottom: 20px; width: 100%;
+    }
+    .reel-container::-webkit-scrollbar { display: none; }
+    
+    .reel-card {
+      flex: 0 0 90%; max-width: 340px; scroll-snap-align: center; background: #000;
+      border: 1px solid var(--border); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; position: relative;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    }
+    
+    .reel-video-wrap { position: relative; width: 100%; background: #000; aspect-ratio: 9/16; }
+    .reel-video-wrap video { width: 100%; height: 100%; object-fit: cover; }
+    
+    .reel-overlay-meta {
+      position: absolute; bottom: 0; left: 0; width: 100%; padding: 16px; background: linear-gradient(to top, rgba(0,0,0,0.95), transparent);
+      display: flex; flex-direction: column; gap: 4px; pointer-events: none;
+    }
+    .reel-badge { font-size: 0.65rem; font-weight: 900; background: var(--accent); color: #fff; padding: 2px 6px; border-radius: 4px; width: fit-content; text-transform: uppercase; }
+    .reel-title { font-size: 0.92rem; font-weight: 900; color: #fff; text-transform: uppercase; }
+    .reel-info { font-size: 0.72rem; color: #aaa; font-weight: 700; }
+
+    .empty-state { text-align: center; color: var(--text-muted); padding: 40px 20px; font-size: 0.88rem; font-weight: 700; text-transform: uppercase; width: 100%; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="main-title">Supervisor <span>de Videos</span></div>
+    <button style="background:#1c1c1c; border:1px solid #333; color:#fff; padding:8px 12px; border-radius:6px; font-weight:800; cursor:pointer;" onclick="cargarEvidencias()">Actualizar</button>
+  </div>
+
+  <div class="filter-wrap">
+    <select id="filterPackage" class="form-select" onchange="renderReel()">
+      <option value="">Todos los Paquetes (Sin Filtro)</option>
+    </select>
+  </div>
+
+  <div class="reel-container" id="reelContainer">
+    <div class="empty-state">Cargando evidencias desde la nube...</div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://fprvbvucmtdpxdihuvrw.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_xAMs8LpCwyMyoql3ohoJUQ_BIRhBQoD';
+    const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+    let evidenciasCache = [];
+
+    async function cargarEvidencias() {
+      if (!sb) return;
+      try {
+        // Consulta directa sin filtros para traer todo el historial ordenado
+        const { data, error } = await sb.from('apex_session_evidence').select('*').order('id', { ascending: false });
+        if (error) throw error;
+        evidenciasCache = data || [];
+
+        const selector = document.getElementById('filterPackage');
+        const currentVal = selector.value;
+        selector.innerHTML = '<option value="">Todos los Paquetes (Sin Filtro)</option>';
+
+        const paquetesUnicos = [...new Set(evidenciasCache.map(e => e.package_id).filter(Boolean))];
+        paquetesUnicos.forEach(pkg => {
+          const opt = document.createElement('option');
+          opt.value = pkg;
+          opt.textContent = `Paquete: ${pkg}`;
+          if (pkg === currentVal) opt.selected = true;
+          selector.appendChild(opt);
+        });
+
+        renderReel();
+      } catch (err) {
+        document.getElementById('reelContainer').innerHTML = `<div class="empty-state">Error al conectar con Supabase: ${err.message}</div>`;
+      }
+    }
+
+    function renderReel() {
+      const container = document.getElementById('reelContainer');
+      const filterPkg = document.getElementById('filterPackage').value;
+
+      // Si no hay selección en el selector, muestra absolutamente todo sin filtrar
+      const filtered = filterPkg ? evidenciasCache.filter(e => e.package_id === filterPkg) : evidenciasCache;
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="empty-state">No hay evidencias registradas en la base de datos.</div>';
+        return;
+      }
+
+      container.innerHTML = '';
+      filtered.forEach(item => {
+        const fechaFormateada = new Date(item.created_at).toLocaleString();
+        const card = document.createElement('div');
+        card.className = 'reel-card';
+        card.innerHTML = `
+          <div class="reel-video-wrap">
+            <video src="${item.video_url}" controls playsinline preload="metadata"></video>
+          </div>
+          <div class="reel-overlay-meta">
+            <div class="reel-badge">${item.package_id || 'GENERAL'}</div>
+            <div class="reel-title">${item.class_name || 'Clase Táctica'}</div>
+            <div class="reel-info">Coach: ${item.coach_name || 'VICTOR'}</div>
+            <div class="reel-info" style="font-size: 0.62rem; color: #888;">${fechaFormateada}</div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    window.onload = () => {
+      cargarEvidencias();
+    };
+  </script>
+</body>
+</html>
